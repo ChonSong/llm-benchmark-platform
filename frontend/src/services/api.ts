@@ -116,4 +116,20 @@ export const resultsApi = {
   },
 };
 
+// Settings API
+export const settingsApi = {
+  getApiKeysStatus: async (): Promise<{ openai_configured: boolean; anthropic_configured: boolean; google_configured: boolean }> => {
+    const response = await api.get('/api/settings/api-keys');
+    return response.data;
+  },
+  getMaskedApiKeys: async (): Promise<{ openai: string; anthropic: string; google: string }> => {
+    const response = await api.get('/api/settings/api-keys/masked');
+    return response.data;
+  },
+  updateApiKeys: async (data: { openai_api_key?: string; anthropic_api_key?: string; google_api_key?: string }): Promise<{ message: string; status: { openai_configured: boolean; anthropic_configured: boolean; google_configured: boolean } }> => {
+    const response = await api.put('/api/settings/api-keys', data);
+    return response.data;
+  },
+};
+
 export default api;
