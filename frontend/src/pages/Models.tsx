@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Edit, RefreshCw, Settings, ToggleLeft, ToggleRight } from 'lucide-react';
-import { modelsApi } from '../services/api';
+import { Plus, Trash2, Edit, RefreshCw, Settings, ToggleLeft, ToggleRight, Key, Eye, EyeOff, Check, X } from 'lucide-react';
+import { modelsApi, settingsApi } from '../services/api';
 import type { ModelConfig } from '../types';
 
 export default function Models() {
@@ -68,17 +68,7 @@ export default function Models() {
         </div>
       </div>
 
-      <div className="bg-slate-800 rounded-xl p-6">
-        <h2 className="text-lg font-semibold mb-4">API Keys Configuration</h2>
-        <p className="text-slate-400 text-sm mb-4">
-          Configure your API keys in the backend .env file or through environment variables:
-        </p>
-        <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm">
-          <p>OPENAI_API_KEY=your-openai-key</p>
-          <p>ANTHROPIC_API_KEY=your-anthropic-key</p>
-          <p>GOOGLE_API_KEY=your-google-key</p>
-        </div>
-      </div>
+      <APIKeysConfig />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -170,6 +160,169 @@ export default function Models() {
             setEditingModel(null);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+function APIKeysConfig() {
+  const queryClient = useQueryClient();
+  const [showKeys, setShowKeys] = useState<{ openai: boolean; anthropic: boolean; google: boolean }>({
+    openai: false,
+    anthropic: false,
+    google: false,
+  });
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [keyValue, setKeyValue] = useState('');
+
+  const { data: keysStatus, isLoading: statusLoading } = useQuery({
+    queryKey: ['apiKeysStatus'],
+    queryFn: settingsApi.getApiKeysStatus,
+  });
+
+  const { data: maskedKeys } = useQuery({
+    queryKey: ['maskedApiKeys'],
+    queryFn: settingsApi.getMaskedApiKeys,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: settingsApi.updateApiKeys,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['apiKeysStatus'] });
+      queryClient.invalidateQueries({ queryKey: ['maskedApiKeys'] });
+      setEditingKey(null);
+      setKeyValue('');
+    },
+  });
+
+  const handleSaveKey = (provider: 'openai' | 'anthropic' | 'google') => {
+    const data: { openai_api_key?: string; anthropic_api_key?: string; google_api_key?: string } = {};
+    if (provider === 'openai') data.openai_api_key = keyValue;
+    if (provider === 'anthropic') data.anthropic_api_key = keyValue;
+    if (provider === 'google') data.google_api_key = keyValue;
+    updateMutation.mutate(data);
+  };
+
+  const handleClearKey = (provider: 'openai' | 'anthropic' | 'google') => {
+    const data: { openai_api_key?: string; anthropic_api_key?: string; google_api_key?: string } = {};
+    if (provider === 'openai') data.openai_api_key = '';
+    if (provider === 'anthropic') data.anthropic_api_key = '';
+    if (provider === 'google') data.google_api_key = '';
+    updateMutation.mutate(data);
+  };
+
+  const providers = [
+    { key: 'openai' as const, name: 'OpenAI', color: 'green' },
+    { key: 'anthropic' as const, name: 'Anthropic', color: 'orange' },
+    { key: 'google' as const, name: 'Google', color: 'blue' },
+  ];
+
+  return (
+    <div className="bg-slate-800 rounded-xl p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <Key className="w-5 h-5 text-blue-400" />
+        <h2 className="text-lg font-semibold">API Keys Configuration</h2>
+      </div>
+      <p className="text-slate-400 text-sm mb-6">
+        Configure your API keys to enable real LLM benchmarking. Keys are stored in memory and will be cleared on server restart.
+      </p>
+
+      {statusLoading ? (
+        <div className="flex items-center justify-center py-4">
+          <RefreshCw className="w-5 h-5 animate-spin text-blue-500" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {providers.map(({ key, name, color }) => {
+            const isConfigured = keysStatus?.[`${key}_configured` as keyof typeof keysStatus];
+            const maskedValue = maskedKeys?.[key] || '';
+            const isEditing = editingKey === key;
+
+            return (
+              <div key={key} className="bg-slate-900 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${isConfigured ? `bg-${color}-500` : 'bg-slate-500'}`} />
+                    <span className="font-medium">{name}</span>
+                    {isConfigured && (
+                      <span className={`text-xs px-2 py-0.5 rounded bg-${color}-500/20 text-${color}-400`}>
+                        Configured
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {!isEditing && (
+                      <>
+                        <button
+                          onClick={() => setShowKeys(prev => ({ ...prev, [key]: !prev[key] }))}
+                          className="p-1.5 hover:bg-slate-700 rounded transition-colors"
+                          title={showKeys[key] ? 'Hide' : 'Show'}
+                        >
+                          {showKeys[key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingKey(key);
+                            setKeyValue('');
+                          }}
+                          className="px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+                        >
+                          {isConfigured ? 'Update' : 'Add Key'}
+                        </button>
+                        {isConfigured && (
+                          <button
+                            onClick={() => handleClearKey(key)}
+                            className="p-1.5 hover:bg-red-500/20 text-red-400 rounded transition-colors"
+                            title="Clear key"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {isEditing ? (
+                  <div className="flex gap-2 mt-3">
+                    <input
+                      type="password"
+                      value={keyValue}
+                      onChange={(e) => setKeyValue(e.target.value)}
+                      placeholder={`Enter ${name} API key`}
+                      className="flex-1 px-3 py-2 bg-slate-800 rounded border border-slate-600 focus:border-blue-500 focus:outline-none text-sm font-mono"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => handleSaveKey(key)}
+                      disabled={!keyValue || updateMutation.isPending}
+                      className="px-3 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded transition-colors"
+                      title="Save"
+                    >
+                      <Check className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingKey(null);
+                        setKeyValue('');
+                      }}
+                      className="px-3 py-2 bg-slate-700 hover:bg-slate-600 rounded transition-colors"
+                      title="Cancel"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  isConfigured && showKeys[key] && (
+                    <div className="mt-2 px-3 py-2 bg-slate-800 rounded font-mono text-sm text-slate-400">
+                      {maskedValue}
+                    </div>
+                  )
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

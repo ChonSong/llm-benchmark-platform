@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.api import benchmarks, models, test_cases, results
+from app.api import benchmarks, models, test_cases, results, settings
 from app.core.database import init_db
 
 
@@ -33,6 +33,7 @@ app.include_router(benchmarks.router, prefix="/api/benchmarks", tags=["benchmark
 app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(test_cases.router, prefix="/api/test-cases", tags=["test-cases"])
 app.include_router(results.router, prefix="/api/results", tags=["results"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 
 
 @app.get("/")
