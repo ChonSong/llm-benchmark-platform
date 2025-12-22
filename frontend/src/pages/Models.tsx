@@ -212,9 +212,9 @@ function APIKeysConfig() {
   };
 
   const providers = [
-    { key: 'openai' as const, name: 'OpenAI', color: 'green' },
-    { key: 'anthropic' as const, name: 'Anthropic', color: 'orange' },
-    { key: 'google' as const, name: 'Google', color: 'blue' },
+    { key: 'openai' as const, name: 'OpenAI', dotClass: 'bg-green-500', badgeClass: 'bg-green-500/20 text-green-400' },
+    { key: 'anthropic' as const, name: 'Anthropic', dotClass: 'bg-orange-500', badgeClass: 'bg-orange-500/20 text-orange-400' },
+    { key: 'google' as const, name: 'Google', dotClass: 'bg-blue-500', badgeClass: 'bg-blue-500/20 text-blue-400' },
   ];
 
   return (
@@ -233,7 +233,7 @@ function APIKeysConfig() {
         </div>
       ) : (
         <div className="space-y-4">
-          {providers.map(({ key, name, color }) => {
+          {providers.map(({ key, name, ...color }) => {
             const isConfigured = keysStatus?.[`${key}_configured` as keyof typeof keysStatus];
             const maskedValue = maskedKeys?.[key] || '';
             const isEditing = editingKey === key;
@@ -242,10 +242,10 @@ function APIKeysConfig() {
               <div key={key} className="bg-slate-900 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full ${isConfigured ? `bg-${color}-500` : 'bg-slate-500'}`} />
+                    <span className={`w-2 h-2 rounded-full ${isConfigured ? color.dotClass : 'bg-slate-500'}`} />
                     <span className="font-medium">{name}</span>
                     {isConfigured && (
-                      <span className={`text-xs px-2 py-0.5 rounded bg-${color}-500/20 text-${color}-400`}>
+                      <span className={`text-xs px-2 py-0.5 rounded ${color.badgeClass}`}>
                         Configured
                       </span>
                     )}
