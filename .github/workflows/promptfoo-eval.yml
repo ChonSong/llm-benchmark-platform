@@ -1,0 +1,139 @@
+# ============================================================
+# GitHub Actions workflow for promptfoo evals
+# Runs on PR, push to main, weekly schedule, manual trigger
+# ============================================================
+name: promptfoo Eval
+
+on:
+  pull_request:
+    paths:
+      - 'promptfooconfig.yaml'
+      - 'redteam.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'promptfooconfig.yaml'
+      - 'redteam.yaml'
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 6 AM UTC
+  workflow_dispatch:      # Manual trigger
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # For PR comments
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Cache promptfoo evaluations
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/promptfoo
+            .promptfoo-cache
+          key: ${{ runner.os }}-promptfoo-${{ hashFiles('promptfooconfig.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-promptfoo-${{ hashFiles('promptfooconfig.yaml') }}-
+            ${{ runner.os }}-promptfoo-
+
+      - name: Install promptfoo
+        run: npm install -g promptfoo
+
+      - name: Run promptfoo eval
+        id: eval
+        continue-on-error: true
+        env:
+          OPENCODE_GO_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY }}
+          PROMPTFOO_CACHE_PATH: ~/.cache/promptfoo
+        run: |
+          npx promptfoo@latest eval \
+            -c promptfooconfig.yaml \
+            --share \
+            --output results.json \
+            --output report.html \
+            --output results.junit.xml
+
+      - name: Quality Gate
+        id: quality-gate
+        if: steps.eval.outcome == 'failure' || steps.eval.outcome == 'success'
+        run: |
+          if [ -f results.json ]; then
+            FAILURES=$(jq '.results.stats.failures // 0' results.json)
+            SUCCESSES=$(jq '.results.stats.successes // 0' results.json)
+            TOTAL=$((FAILURES + SUCCESSES))
+            echo "Results: $TOTAL total, $SUCCESSES passed, $FAILURES failed"
+            echo "failures=$FAILURES" >> "$GITHUB_OUTPUT"
+            echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+            if [ "$FAILURES" -gt 0 ]; then
+              echo "❌ Quality gate FAILED: $FAILURES test(s) failed"
+              echo "status=failed" >> "$GITHUB_OUTPUT"
+              exit 1
+            fi
+            echo "✅ All tests passed!"
+            echo "status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ No results file found, skipping quality gate"
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload eval artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-eval-results
+          path: |
+            results.json
+            report.html
+            results.junit.xml
+          if-no-files-found: warn
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request' && steps.eval.outcome != 'skipped'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let body;
+            try {
+              const raw = fs.readFileSync('results.json', 'utf8');
+              const results = JSON.parse(raw);
+              const stats = results.results.stats;
+              const passRate = stats.successes + stats.failures > 0
+                ? ((stats.successes / (stats.successes + stats.failures)) * 100).toFixed(1)
+                : 'N/A';
+
+              body = `## 🤖 promptfoo Eval Results\n\n`;
+              body += `| Metric | Value |\n|---|---|\n`;
+              body += `| Tests | ${stats.successes + stats.failures} |\n`;
+              body += `| ✅ Passed | ${stats.successes} |\n`;
+              body += `| ❌ Failed | ${stats.failures} |\n`;
+              body += `| 📊 Pass Rate | ${passRate}% |\n`;
+              body += `| 💰 Total Cost | $${(stats.totalCost || 0).toFixed(4)} |\n`;
+              body += `| ⚡ Total Latency | ${((stats.totalLatencyMs || 0) / 1000).toFixed(1)}s |\n`;
+
+              if (stats.failures > 0) {
+                body += `\n> ⚠️ **Quality gate: ${stats.failures} failure(s)**\n`;
+              } else {
+                body += `\n> ✅ **All tests passed!**\n`;
+              }
+            } catch (e) {
+              body = `## 🤖 promptfoo Eval Results\n\nCould not parse results.json: ${e.message}`;
+            }
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body: body
+            });

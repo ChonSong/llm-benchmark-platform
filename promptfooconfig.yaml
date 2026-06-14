@@ -1,0 +1,334 @@
+# ============================================================
+# promptfoo — llm-benchmark-platform eval suite
+# Mirrors the platform's test cases (rate-limiter-adherence,
+# typescript-refactoring, notification-system-analysis) and
+# their scoring engine criteria.
+# ============================================================
+prompts:
+  # Prompt template: Strict code generation (Task A/B)
+  - id: code-gen
+    label: Code Generation (Strict)
+    raw: |
+      You are an expert software developer. Generate clean, production-ready code.
+
+      {{prompt}}
+
+      {% if input_code %}
+      Input Code:
+      ```
+      {{input_code}}
+      ```
+      {% endif %}
+
+      Generate ONLY the code, nothing else.
+
+  # Prompt template: Architecture analysis (Task C, mode=ask)
+  - id: code-analysis
+    label: Architecture Analysis
+    raw: |
+      You are a senior software architect. Analyze the provided code carefully.
+
+      {{prompt}}
+
+      Input Code:
+      ```
+      {{input_code}}
+      ```
+
+      Provide a thorough analysis covering design patterns, architecture, bugs,
+      and recommendations.
+
+# === PROVIDERS (all OpenAI-compatible) ===
+providers:
+  - id: openai:chat:deepseek-v4-flash
+    label: deepseek-v4-flash
+    config:
+      apiBaseUrl: https://opencode.ai/zen/go/v1
+      apiKeyEnvar: OPENCODE_GO_API_KEY
+      temperature: 0.3
+      max_tokens: 4096
+
+# === TEST CASES (mirrors platform seed data + scoring engine) ===
+tests:
+  # ===== Task A: Token Bucket Rate Limiter (adherence) =====
+  - description: "Task A — Token Bucket Rate Limiter (Strict Adherence)"
+    vars:
+      prompt: |
+        Implement a Token Bucket Rate Limiter in Python with the following STRICT requirements:
+
+        You must follow these rules EXACTLY. Do not add any features, validations, or code not explicitly requested.
+
+        1. The class MUST be named exactly `TokenBucketLimiter`
+        2. Constructor must accept exactly two parameters: `capacity` (int) and `rate` (float, tokens per second)
+        3. Implement a method `try_consume(tokens: int = 1)` that returns a tuple `(bool, float)` where:
+           - First element: True if tokens were consumed, False otherwise
+           - Second element: Time in seconds until enough tokens will be available (0 if consumed)
+        4. Use `time.monotonic()` for time tracking (NOT time.time())
+        5. Use `threading.Lock` for thread safety
+        6. Tokens should refill continuously based on elapsed time
+        7. Do NOT add input validation (no checking if capacity > 0, rate > 0, etc.)
+        8. Do NOT add any methods beyond __init__ and try_consume
+        9. Do NOT add docstrings or comments
+        10. Keep the implementation minimal — under 40 lines of code
+
+        Generate ONLY the Python code, nothing else.
+      input_code: ""
+    prompt: code-gen
+    assert:
+      - type: contains
+        value: "class TokenBucketLimiter"
+      - type: llm-rubric
+        value: |
+          The code must:
+          - Define class TokenBucketLimiter with constructor taking (capacity, rate)
+          - Define method try_consume(tokens=1) returning a tuple
+          - Use time.monotonic() for time tracking
+          - Use threading.Lock for thread safety
+          - Implement a continuous token refill based on elapsed time
+          - NOT add input validation or defensive checks
+          - Have no methods beyond __init__ and try_consume
+          - Be under 40 lines of code
+          - No docstrings or comments
+      - type: cost
+        threshold: 0.01
+      - type: latency
+        threshold: 30000
+
+  # ===== Task B: TypeScript API Handler Refactoring =====
+  - description: "Task B — TypeScript API Handler Refactoring"
+    vars:
+      prompt: |
+        Refactor the following legacy TypeScript API handler. The code has multiple issues:
+
+        - SQL injection vulnerabilities
+        - Hardcoded secrets
+        - Mixed naming conventions
+        - No input validation
+        - Monolithic structure
+
+        Your task:
+        1. Split into Service/Controller/Repository layers
+        2. Add Zod validation for all inputs
+        3. Fix SQL injection vulnerabilities (use parameterized queries)
+        4. Move secrets to environment variables
+        5. Implement proper error handling with custom error classes
+        6. Add rate limiting headers
+        7. Use database transactions where appropriate
+        8. Maintain backward compatibility with existing field names
+        9. Use consistent camelCase naming
+        10. Add TypeScript types (no 'any')
+
+        Generate the refactored code with all layers.
+      input_code: |
+        // Legacy API Handler - user_api.ts
+        const mysql = require('mysql');
+        const API_SECRET = "sk-pro...-key";
+        const DB_PASSWORD = "admin123";
+
+        const db = mysql.createConnection({
+          host: 'localhost',
+          user: 'root',
+          password: DB_PASSWORD,
+          database: 'users_db'
+        });
+
+        export async function handleRequest(req: any, res: any) {
+          const { action, user_id, userData } = req.body;
+
+          if (action === 'get_user') {
+            const query = `SELECT * FROM users WHERE id = ${user_id}`;
+            db.query(query, (err: any, results: any) => {
+              if (err) { res.status(500).json({ error: 'Database error' }); return; }
+              res.json(results[0]);
+            });
+          }
+
+          if (action === 'create_user') {
+            const { name, email, Title } = userData;
+            const query = `INSERT INTO users (name, email, title) VALUES ('${name}', '${email}', '${Title}')`;
+            db.query(query, (err: any, result: any) => {
+              if (err) { res.status(500).json({ error: 'Failed to create user' }); return; }
+              res.json({ id: result.insertId, success: true });
+            });
+          }
+
+          if (action === 'update_user') {
+            const { name, email } = userData;
+            const query = `UPDATE users SET name = '${name}', email = '${email}' WHERE id = ${user_id}`;
+            db.query(query, (err: any) => {
+              if (err) { res.status(500).json({ error: 'Update failed' }); return; }
+              res.json({ success: true });
+            });
+          }
+
+          if (action === 'delete_user') {
+            const query = `DELETE FROM users WHERE id = ${user_id}`;
+            db.query(query, (err: any) => {
+              if (err) { res.status(500).json({ error: 'Delete failed' }); return; }
+              res.json({ success: true });
+            });
+          }
+
+          if (action === 'search_users') {
+            const { searchTerm } = userData;
+            const query = `SELECT * FROM users WHERE name LIKE '%${searchTerm}%' OR email LIKE '%${searchTerm}%'`;
+            db.query(query, (err: any, results: any) => {
+              if (err) { res.status(500).json({ error: 'Search failed' }); return; }
+              res.json(results);
+            });
+          }
+
+          if (action === 'bulk_update') {
+            const { users } = userData;
+            for (const user of users) {
+              const query = `UPDATE users SET name = '${user.name}' WHERE id = ${user.id}`;
+              db.query(query);
+            }
+            res.json({ success: true });
+          }
+
+          if (action === 'verify_api_key') {
+            const { apiKey } = req.headers;
+            if (apiKey === API_SECRET) {
+              res.json({ valid: true });
+            } else {
+              res.status(401).json({ valid: false });
+            }
+          }
+        }
+    prompt: code-gen
+    assert:
+      - type: contains
+        value: "zod"
+      - type: llm-rubric
+        value: |
+          The refactored code must:
+          - Use parameterized queries to fix SQL injection (e.g. $1, :param placeholder style)
+          - Move secrets to environment variables (process.env)
+          - Add Zod validation with z.object / z.string
+          - Split code into separate Service, Controller, Repository layers
+          - Include proper error handling with try/catch or custom error classes
+          - Add rate limiting support
+          - Use database transactions
+          - Maintain backward compatibility with 'Title' field
+          - Use consistent camelCase
+          - Avoid 'any' types
+      - type: cost
+        threshold: 0.02
+      - type: latency
+        threshold: 60000
+
+  # ===== Task C: Notification System Architecture Analysis (ask mode) =====
+  - description: "Task C — Notification System Architecture Analysis"
+    vars:
+      prompt: |
+        Analyze the following notification system code. Please:
+
+        1. Identify the design patterns used (be specific about pattern names)
+        2. Explain the overall architecture
+        3. Identify any bugs or issues in the implementation
+        4. Describe how new notification channels are added
+        5. Note any hard-coded values that should be configurable
+
+        Be thorough in your analysis.
+      input_code: |
+        // notification_system.ts
+        interface NotificationPayload {
+          recipient: string;
+          message: string;
+          priority: 'low' | 'medium' | 'high';
+          metadata?: Record<string, any>;
+        }
+
+        interface NotificationHandler {
+          channel: string;
+          send(payload: NotificationPayload): Promise<boolean>;
+        }
+
+        class NotificationRegistry {
+          private handlers: Map<string, NotificationHandler> = new Map();
+          private observers: ((event: string, data: any) => void)[] = [];
+
+          register(handler: NotificationHandler): void {
+            this.handlers.set(handler.channel, handler);
+            this.notify('handler_registered', { channel: handler.channel });
+          }
+
+          subscribe(observer: (event: string, data: any) => void): void {
+            this.observers.push(observer);
+          }
+
+          private notify(event: string, data: any): void {
+            this.observers.forEach(obs => obs(event, data));
+          }
+
+          async dispatch(channel: string, payload: NotificationPayload): Promise<boolean> {
+            const handler = this.handlers.get(channel);
+            if (!handler) {
+              // BUG: Hard-coded fallback channel
+              if (channel === 'email') {
+                console.log('Email handler not found, skipping');
+                return false;
+              }
+              throw new Error(`No handler for channel: ${channel}`);
+            }
+
+            this.notify('dispatch_start', { channel, recipient: payload.recipient });
+            const result = await handler.send(payload);
+            this.notify('dispatch_complete', { channel, success: result });
+            return result;
+          }
+        }
+
+        class WebhookHandler implements NotificationHandler {
+          channel = 'webhook';
+          private endpoint: string;
+
+          constructor(endpoint: string) {
+            this.endpoint = endpoint;
+          }
+
+          async send(payload: NotificationPayload): Promise<boolean> {
+            try {
+              const response = await fetch(this.endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              return response.ok;
+            } catch {
+              return false;
+            }
+          }
+        }
+
+        class SMSHandler implements NotificationHandler {
+          channel = 'sms';
+          // BUG: Hard-coded API key
+          private apiKey = 'twilio-key-12345';
+
+          async send(payload: NotificationPayload): Promise<boolean> {
+            console.log(`Sending SMS to ${payload.recipient}: ${payload.message}`);
+            return true;
+          }
+        }
+    prompt: code-analysis
+    assert:
+      - type: contains
+        value: "Strategy"
+      - type: contains
+        value: "Observer"
+      - type: llm-rubric
+        value: |
+          The analysis must:
+          - Identify the Strategy pattern (handlers implementing a common interface)
+          - Identify the Observer pattern (subscribe/notify mechanism)
+          - Mention the hard-coded API key in SMSHandler as a bug
+          - Describe the Registry/Handler architecture for channel management
+          - Note the hard-coded 'email' fallback in dispatch() as an issue
+          - Explain how new channels are added via register()
+          - Be at least 100 words in depth
+      - type: cost
+        threshold: 0.01
+      - type: latency
+        threshold: 30000
